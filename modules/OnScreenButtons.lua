@@ -18,7 +18,7 @@ local buttons = {
 local module = {
 	dbDefaults={
 		buttons_show=false,
-		buttons_buttom=false,
+		buttons_bottom=false,
 		buttons_radius=0.56,
 		buttons_alpha=0.6,
 	},
@@ -105,7 +105,8 @@ function module.AddOptions()
 	}
 end
 
-function module.events.ADDON_LOADED()
+function module.events.ADDON_LOADED(eventFrame,loadedAddon)
+	if loadedAddon ~= addon or FarmHud.onScreenButtons then return end
 	FarmHud.onScreenButtons = CreateFrame("Frame",nil,FarmHud,"FarmHudOnScreenButtonsTemplate")
 	for buttonName,buttonData in pairs(buttons)do
 		local btn = CreateFrame("Button", nil, FarmHud.onScreenButtons, "FarmHudonScreenButtonTemplate")
@@ -118,6 +119,7 @@ function module.events.ADDON_LOADED()
 		btn:SetScript("OnClick",buttonData[5])
 		FarmHud.onScreenButtons[buttonName] = btn
 	end
+	eventFrame:UnregisterEvent("ADDON_LOADED")
 end
 
 function module.events.PLAYER_LOGIN()

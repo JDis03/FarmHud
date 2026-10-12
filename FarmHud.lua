@@ -11,9 +11,11 @@ FarmHudMixin = {};
 FarmHudWarningMixin = {};
 
 local _G,type,wipe,tinsert,unpack,tostring,C_Map = _G,type,wipe,table.insert,unpack,tostring,C_Map;
-local Minimap_OnClick = (MinimapMixin and MinimapMixin.Onclick) or Minimap_OnClick; -- TODO: check it - needed for classic 1.15 / wotlk 3.4.3
+local Minimap_OnClick = (MinimapMixin and MinimapMixin.OnClick) or Minimap_OnClick;
 local Minimap_UpdateRotationSetting = Minimap_UpdateRotationSetting or function() end -- TODO: check it - need for classic 1.15 / wotlk 3.4.3
-local isPingLocationForbidden = WOW_PROJECT_ID==WOW_PROJECT_MAINLINE;
+-- Camelot's native ping protection is not certified. HUD clicks never ping
+-- there; normal Blizzard scripts are restored when the HUD closes.
+local isPingLocationForbidden = WOW_PROJECT_ID==WOW_PROJECT_MAINLINE or ns.IsForever();
 local strata = {
 	-- https://warcraft.wiki.gg/wiki/Frame_Strata
 	--   WORLD [reserved]
@@ -31,7 +33,7 @@ local LibHijackMinimap_Token,LibHijackMinimap,_ = {},nil,nil;
 local media = "Interface\\AddOns\\"..addon.."\\media\\";
 local mps,Minimap,MinimapMT,mouseOnKeybind = {},_G.Minimap,getmetatable(_G.Minimap).__index,nil;
 local playerDot_orig, playerDot_custom = "Interface\\Minimap\\MinimapArrow",nil;
-if WOW_PROJECT_ID==WOW_PROJECT_MAINLINE then
+if WOW_PROJECT_ID==WOW_PROJECT_MAINLINE or ns.IsForever() then
 	playerDot_orig = "minimaparrow" -- blizzard using atlas entry of ObjectIconsAtlas.blp now
 end
 local timeTicker,cardinalTicker,coordsTicker,background_alpha_current;
@@ -296,11 +298,15 @@ end
 
 -- function replacements for Minimap while FarmHud is enabled.
 -- Should prevent problems with repositioning of minimap buttons from other addons.
-local replacements,addHooks
+local replacements,addHooks,resetDummyContext
 do
-	local alreadyHooked,useDummy,lockedBy = {},nil,nil;
+	local alreadyHooked,hovered,dragged,callbackDepth = {},{},{},0;
+	resetDummyContext = function()
+		wipe(hovered);
+		wipe(dragged);
+	end
 	local function MinimapOrDummy(func,...)
-		if useDummy then
+		if callbackDepth>0 or next(hovered) or next(dragged) then
 			return FarmHudMinimapDummy[func](FarmHudMinimapDummy,...);
 		end
 		return MinimapMT[func](Minimap,...);
@@ -318,33 +324,28 @@ do
 		SetZoom = function(m,z) end, -- prevent zoom
 	}
 
-	local objHookedFunctions = {
-		OnEnter=function(self,...)
-			if lockedBy~=false then
-				return alreadyHooked[self].OnEnter(self,...)
-			end
-			lockedBy = self;
-			useDummy = true;
-		end,
-		OnLeave=function(self,...)
-			if lockedBy~=self then
-				return alreadyHooked[self].OnLeave(self,...)
-			end
-			useDummy = false;
-		end,
-		OnDragStart=function(self,...)
-			if lockedBy~=false then
-				return alreadyHooked[self].OnDragStart(self,...)
-			end
-			lockedBy = self;
-			useDummy = true;
-		end,
-		OnDragStop=function(self,...)
-			if lockedBy~=self then
-				return alreadyHooked[self].OnDragStop(self,...)
-			end
-			useDummy = false;
+	local function pack(...) return {n=select("#",...),...}; end
+	local function invoke(self,event,owners,acquire,...)
+		-- Release before calling out: a callback may re-acquire the same widget.
+		-- callbackDepth keeps dummy geometry active until that callback returns.
+		if acquire then owners[self] = true; else owners[self] = nil; end
+		local original = alreadyHooked[self][event];
+		-- Keep dummy geometry through release callbacks, including callbacks
+		-- with no matching acquire. Hover and drag have independent ownership.
+		callbackDepth = callbackDepth + 1;
+		local result = original and pack(pcall(original,self,...)) or {true,n=1};
+		callbackDepth = callbackDepth - 1;
+		if not result[1] then
+			hovered[self],dragged[self] = nil,nil;
+			error(result[2],0);
 		end
+		return unpack(result,2,result.n);
+	end
+	local objHookedFunctions = {
+		OnEnter=function(self,...) return invoke(self,"OnEnter",hovered,true,...); end,
+		OnLeave=function(self,...) return invoke(self,"OnLeave",hovered,false,...); end,
+		OnDragStart=function(self,...) return invoke(self,"OnDragStart",dragged,true,...); end,
+		OnDragStop=function(self,...) return invoke(self,"OnDragStop",dragged,false,...); end,
 	}
 
 	function addHooks(obj)
@@ -352,11 +353,14 @@ do
 			return;
 		end
 		alreadyHooked[obj] = {}
-		for e,f in pairs(objHookedFunctions) do
-			local func = obj:GetScript(e)
-			if func then
-				alreadyHooked[obj][e] = func;
-				obj:SetScript(e,f);
+		for _,pair in ipairs({{"OnEnter","OnLeave"},{"OnDragStart","OnDragStop"}}) do
+			local first,second = pair[1],pair[2];
+			alreadyHooked[obj][first] = obj:GetScript(first);
+			alreadyHooked[obj][second] = obj:GetScript(second);
+			if alreadyHooked[obj][first] or alreadyHooked[obj][second] then
+				-- A cleanup wrapper is required even without an original handler.
+				obj:SetScript(first,objHookedFunctions[first]);
+				obj:SetScript(second,objHookedFunctions[second]);
 			end
 		end
 	end
@@ -524,20 +528,16 @@ end
 FarmHudMinimapDummyMixin = {}
 
 function FarmHudMinimapDummyMixin:OnMouseUp()
+	if isPingLocationForbidden then return; end
 	if type(mps.OnMouseUp)~="function" then
-		return;
-	end
-	if 	(mps.OnMouseUp==_G.Minimap_OnClick or mps.OnMouseUp==Minimap.OnClick) and isPingLocationForbidden then
 		return;
 	end
 	mps.OnMouseUp(self);
 end
 
 function FarmHudMinimapDummyMixin:OnMouseDown()
-	if type(mps.OnMouseDown)~="function" and not type(mps.OnMouseUp)~="function" then
-		return -- Ignore OnMouseDown of OnMouseUp present
-	end
-	if 	(mps.OnMouseDown==_G.Minimap_OnClick or mps.OnMouseDown==Minimap.OnClick) and isPingLocationForbidden then
+	if isPingLocationForbidden then return; end
+	if type(mps.OnMouseDown)~="function" then
 		return;
 	end
 	mps.OnMouseDown(self);
@@ -728,6 +728,7 @@ function FarmHudWarningMixin:OnHide()
 end
 
 function FarmHudMixin:OnShow()
+	resetDummyContext();
 	trackEnableMouse = true;
 
 	FarmHudMinimapDummy:SetParent(Minimap:GetParent());
@@ -761,6 +762,7 @@ function FarmHudMixin:OnShow()
 	-- cache script entries
 	local OnMouseUp = Minimap:GetScript("OnMouseUp");
 	local OnMouseDown = Minimap:GetScript("OnMouseDown");
+	mps.originalMouseScripts = {OnMouseUp=OnMouseUp,OnMouseDown=OnMouseDown};
 
 	if OnMouseDown and OnMouseUp==nil then -- for ElvUI. They added to OnMouseUp a dummy function and using OnMouseDown instead.
 		mps.OnMouseDown = OnMouseDown;
@@ -812,24 +814,13 @@ function FarmHudMixin:OnShow()
 	-- reanchor named frames that not have minimap as parent but anchored on it
 	mps.anchoredFrames = {};
 	for _,frameName in ipairs(anchoredFrames) do
-		local frame;
-		if frameName:match("%.") then
-			local path = {strsplit(".",frameName)};
-			if _G[path[1]] then
-				local f = _G[path[1]]
-				for i=2, #path do
-					if f[path[i]] then
-						f = f[path[i]];
-					end
-				end
-				frame = f;
+		local frame = ns.ResolveGlobalFrame(frameName);
+		if frame then
+			local parent,point = objectToDummy(frame,true,"OnShow.anchoredFrames");
+			if parent or point then
+				-- Save the object, including anchor-only moves and dotted names.
+				mps.anchoredFrames[frame]=true;
 			end
-		end
-		if _G[frameName] then
-			frame = _G[frameName];
-		end
-		if frame and objectToDummy(frame,true,"OnShow.anchoredFrames") then
-			mps.anchoredFrames[frameName]=true;
 		end
 	end
 
@@ -874,7 +865,7 @@ function FarmHudMixin:OnShow()
 		rotationMode = FarmHudDB.rotation and "1" or "0";
 		C_CVar.SetCVar("rotateMinimap", rotationMode);
 		Minimap_UpdateRotationSetting();
-		if not ns.IsDragonFlight() then
+		if not ns.HasModernMinimapSkin() and MinimapCompassTexture then
 			MinimapCompassTexture:Hide(); -- Note: Compass Texture is the new border texture in dragonflight
 		end
 	end
@@ -904,12 +895,7 @@ function FarmHudMixin:OnShow()
 end
 
 function FarmHudMixin:OnHide()
-	if rotationMode ~= mps.rotation then
-		C_CVar.SetCVar("rotateMinimap", mps.rotation);
-		rotationMode = mps.rotation
-		Minimap_UpdateRotationSetting();
-	end
-
+	resetDummyContext();
 	trackEnableMouse = false;
 
 	-- restore function replacements for Minimap
@@ -933,21 +919,11 @@ function FarmHudMixin:OnHide()
 	FarmHudMinimapDummy:Hide();
 	self.cluster:Hide();
 
-	if mps.OnMouseDown and Minimap:GetScript("OnMouseDown")==nil then
-		if not isPingLocationForbidden then
-			MinimapMT.SetScript(Minimap,"OnMouseUp",mps.OnMouseUp);
-			MinimapMT.SetScript(Minimap,"OnMouseDown",mps.OnMouseDown);
-		end
-		FarmHudMinimapDummy:SetScript("OnMouseUp",nil);
-		FarmHudMinimapDummy:SetScript("OnMouseDown",nil);
-		FarmHudMinimapDummy:EnableMouse(false);
-	elseif mps.OnMouseUp then
-		if not isPingLocationForbidden then
-			MinimapMT.SetScript(Minimap,"OnMouseUp",mps.OnMouseUp);
-		end
-		FarmHudMinimapDummy:SetScript("OnMouseUp",nil);
-		FarmHudMinimapDummy:EnableMouse(false);
-	end
+	-- Restore nil handlers as well as functions. Do not erase the dummy's XML
+	-- handlers: it will be reused on the next HUD visit.
+	MinimapMT.SetScript(Minimap,"OnMouseUp",mps.originalMouseScripts.OnMouseUp);
+	MinimapMT.SetScript(Minimap,"OnMouseDown",mps.originalMouseScripts.OnMouseDown);
+	FarmHudMinimapDummy:EnableMouse(false);
 
 	for name,todo in pairs(minimapScripts)do
 		if type(mps[name])=="function" then
@@ -976,10 +952,8 @@ function FarmHudMixin:OnHide()
 	end
 
 	-- anchored frames by name
-	for frameName in pairs(mps.anchoredFrames) do
-		if _G[frameName] then
-			objectToDummy(_G[frameName],false,"OnHide.anchoredFrames");
-		end
+	for frame in pairs(mps.anchoredFrames) do
+		objectToDummy(frame,false,"OnHide.anchoredFrames");
 	end
 
 	-- nameless textures
@@ -1005,7 +979,13 @@ function FarmHudMixin:OnHide()
 	SetPlayerDotTexture(false);
 	TrackingTypes_Update(false);
 
-	wipe(mps);
+	-- Camelot updates its mask, compass and backdrop on this CVar callback.
+	-- Restore it only after their parents and anchors have been put back.
+	if mps.rotation and C_CVar.GetCVar("rotateMinimap") ~= mps.rotation then
+		C_CVar.SetCVar("rotateMinimap", mps.rotation);
+		Minimap_UpdateRotationSetting();
+	end
+	rotationMode = mps.rotation;
 
 	self:UpdateCoords(false);
 	self:UpdateTime(false);
@@ -1014,6 +994,7 @@ function FarmHudMixin:OnHide()
 	if mps.backdropMouse~=MinimapBackdrop:IsMouseEnabled() then
 		MinimapBackdrop:EnableMouse(mps.backdropMouse);
 	end
+	wipe(mps);
 end
 
 local function checkOnKnownProblematicAddOns()
@@ -1280,4 +1261,3 @@ function FarmHudMixin:OnLoad()
 
 	ns.modules("OnLoad");
 end
-

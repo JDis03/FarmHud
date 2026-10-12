@@ -40,8 +40,9 @@ enable-nolib-creation: no
 enable-toc-creation: yes
 
 ignore:
+    - tests
+    - tools
     - libs/LibStub/tests
     - libs/HereBeDragons/CallbackHandler-1.0
     - libs/HereBeDragons/LibStub
     - libs/HizurosSharedTools/README.md
-

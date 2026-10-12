@@ -6,6 +6,7 @@
 	<Script file="Localization.imported.lua"/>
 	<Script file="Localization.workfile.lua"/>
 	<!--@end-do-not-package@-->
+	<Script file="FarmHud_Compat.lua"/>
 	<Script file="FarmHud.lua"/>
 	<Script file="FarmHud_Options.lua"/>
 	<Script file="FarmHud_DataBroker.lua"/>

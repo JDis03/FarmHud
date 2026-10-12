@@ -11,6 +11,74 @@
 ## Description
 Turn your minimap into a hud for farming ore / herb.
 
+## Forever / Camelot fork
+
+This fork adds a compatibility path for **WoW Forever 1.60.1**, using the
+public UI source for **build 70235** as its reference. Forever is project
+`WOW_PROJECT_CAMELOT` (18), not Classic Era; its interface identifier is
+`16001`. Other client entries in the TOC are retained.
+
+* Recognizes Forever without changing the game's project constants.
+* Keeps its modern compass skin and restores rotation after minimap anchors
+  and parents have returned to their original locations.
+* Restores anchor-only moves, nested frame names, mouse state, and original
+  click handlers across repeated HUD visits.
+* Disables HUD-originated minimap pings conservatively on Forever. This is
+  **not** a claim that the native client forbids every ping; Blizzard's normal
+  click handlers are restored when the HUD closes.
+* Initializes the on-screen button container only once, for this addon.
+
+The HUD displays the **real minimap**, including nearby live mineral tracking
+dots when Find Minerals is active. It does not need GatherMate2 or a historical
+node database. It does not increase detection range, identify ore from a dot,
+or enumerate live nodes through Lua.
+
+### Verification and manual validation
+
+From the repository root, run:
+
+```sh
+lua5.1 tests/test_compat.lua
+lua5.1 tests/test_lifecycle.lua
+lua5.1 tests/test_buttons.lua
+lua5.1 tests/test_hooks.lua
+lua5.1 tests/test_native_skin.lua
+python3 tests/test_package.py
+```
+
+These tests use mocked widgets. They verify Lua state restoration, **not**
+native security/taint restrictions or visual behavior in the actual client.
+The skin test can also execute the exact native Camelot callback from a local
+checkout of [Blizzard's public UI source](https://github.com/Gethe/wow-ui-source/tree/a84e2b1b41d3d4137127c07e4da448aa3251d6f1):
+
+```sh
+FOREVER_UI_SOURCE=/path/to/wow-ui-source lua5.1 tests/test_native_skin.lua
+```
+
+In-game validation is still required, including HUD toggling, rotation,
+hover/drag, combat transitions, and restoring the normal minimap on close.
+
+Before manual installation, close WoW and back up any existing `FarmHud` addon
+and its SavedVariables. Do not change them while the client is running.
+After installation, `/farmhudcompat` prints read-only client/API diagnostics.
+Start validation out of combat with Find Minerals active, without historical
+minimap overlays. Compare a live node appearing and disappearing, by day and
+night. No game installation is performed by the tests or packaging tool.
+
+### Offline package
+
+A raw Git checkout lacks the libraries that upstream normally bundles.
+The offline packaging tool reuses **only the libraries** from the audited
+[10.3.0 upstream release](https://github.com/HizurosWoWAddOns/FarmHud/releases/tag/10.3.0-release),
+verifies its pinned SHA-256, and packages this fork's current code:
+
+```sh
+python3 tools/package_forever.py FarmHud-10.3.0-release.zip /tmp/FarmHud-forever.zip
+```
+
+The resulting ZIP has a `FarmHud/` addon directory and is not installed
+automatically. Existing output files are never overwritten.
+
 ![FarmHud Screenshot1](./.github/media/farmhud1.jpg) ![FarmHud Screenshot2](./.github/media/farmhud2.jpg)
 
 ## WARNING: ADDON_ACTION_FORBIDDIN with Midnight

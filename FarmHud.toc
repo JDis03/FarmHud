@@ -1,4 +1,4 @@
-## Interface: 120100, 50504, 38002, 20506, 11509
+## Interface: 16001, 120100, 50504, 38002, 20506, 11509
 ## Title: FarmHud
 ## Version: @project-version@
 
@@ -37,4 +37,3 @@ libs\LibColors-1.0\LibColors-1.0.xml
 libs\HizurosSharedTools\HizurosSharedTools.lua
 
 FarmHud.xml
-
